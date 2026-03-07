@@ -25,16 +25,16 @@ def main():
         if i % 2 == 0:
             # 偶数: best先手、default後手
             tasks.append((
-                default_ind.analyzer.weights,
-                best_ind.analyzer.weights,             
+                best_ind.analyzer.weights,
+                default_ind.analyzer.weights,             
                 DEPTH,
                 1
             ))
         else:
             # 奇数: default先手、best後手
             tasks.append((
-                best_ind.analyzer.weights,
                 default_ind.analyzer.weights,
+                best_ind.analyzer.weights,
                 DEPTH,
                 1
             ))

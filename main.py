@@ -5,9 +5,65 @@ import math
 import copy
 from engine import GomokuAnalyzer
 
-# ─────────────────────────────────────────────
-#  Pygame 設定
-# ─────────────────────────────────────────────
+# ============================================================
+#  ★★★ 進化個体の重み設定 ★★★
+#  EvoVsEvo モード用。ここを書き換えて対戦させる。
+#  キーは engine.py の GomokuAnalyzer.weights と同じ。
+# ============================================================
+
+WEIGHTS_A = {   # 個体A（黒）
+   "five": 141884.30845660297,
+    "guaranteed_four": 75493.05468189875,
+    "open_four": 11842.691377980767,
+    "dead_four": 1388.7012068175336,
+    "open_three": 2586.28549971406,
+    "dead_three": 200.67032230114344,
+    "open_two": 20.941799463498594,
+    "fork_44": 7230.454135865415,
+    "fork_43": 3303.116845603808,
+    "fork_33": 1363.1920075485698,
+    "both_open_threats": 31599.875771517913,
+    "defense_weight": 0.9457253075005674,
+    "def_open_four": 127608.39107361011,
+    "def_open_three": 3208.263031972154,
+    "def_dead_three": 107.16019258978189,
+    "def_multiple_threats": 5365.7740532704465,
+    "center_bonus": 80.68683520128805,
+    "continuity_weight": 77.85109027389922,
+    "mcts_simulation_depth": 2
+}
+
+WEIGHTS_B = {   # 個体B（白）― ここを変えて差をつける
+    'five': 100000,
+            'guaranteed_four': 50000,
+            'open_four': 12000,
+            'dead_four': 5000,
+            'open_three': 1500,
+            'dead_three': 200,
+            'open_two': 50,
+            
+            # === フォーク・両見 ===
+            'fork_44': 15000,
+            'fork_43': 8000,
+            'fork_33': 3000,
+            'both_open_threats': 10000,  # 新規：両見検出ボーナス
+            
+            # === 防御関連 ===
+            'defense_weight': 1.2,
+            'def_open_four': 50000,      # 相手の活四防ぐ
+            'def_open_three': 2000,      # 相手の活三防ぐ
+            'def_dead_three': 300,
+            'def_multiple_threats': 15000,  # 新規：複数脅威同時ブロック
+            
+            # === その他 ===
+            'center_bonus': 100,
+            'continuity_weight': 100,
+            'mcts_simulation_depth': 3,
+}
+
+# ============================================================
+
+# Pygame設定
 CELL_SIZE = 40
 MARGIN = 50
 BOARD_SIZE = 15
@@ -45,165 +101,25 @@ font_large  = get_japanese_font(24)
 font_title  = get_japanese_font(28)
 
 
-# ─────────────────────────────────────────────
-#  engine.py の self.weights キーに対応した入力フィールド定義
-#
-#  quick_evaluate / evaluate_pattern_hierarchical で使われる主要キー:
-#    five, open_four, dead_four, open_three, dead_three, open_two
-#    defense_weight  ← 防御倍率（float 可）
-#    fork_44, fork_43, fork_33
-# ─────────────────────────────────────────────
-WEIGHT_DEFS = [
-    # ( 表示ラベル,             weightsキー,        デフォルト値 )
-    ("五連       (five)",        "five",             100000),
-    ("活四  (open_four)",        "open_four",         12000),
-    ("眠四  (dead_four)",        "dead_four",          5000),
-    ("活三 (open_three)",        "open_three",         1500),
-    ("眠三 (dead_three)",        "dead_three",          200),
-    ("活二   (open_two)",        "open_two",             50),
-    ("防御係数 (def_weight)",    "defense_weight",      1.2),
-    ("両四フォーク (fork_44)",   "fork_44",           15000),
-    ("四三フォーク (fork_43)",   "fork_43",            8000),
-    ("両三フォーク (fork_33)",   "fork_33",            3000),
-]
-NUM_WEIGHTS = len(WEIGHT_DEFS)
+def apply_weights(analyzer: GomokuAnalyzer, weights: dict):
+    """weights 辞書を analyzer.weights に上書きする"""
+    for key, val in weights.items():
+        if key in analyzer.weights:
+            analyzer.weights[key] = val
 
 
-def make_default_fields():
-    return [str(d) for _, _, d in WEIGHT_DEFS]
-
-
-def apply_weights_to_analyzer(analyzer: GomokuAnalyzer, field_values: list):
-    """field_values（文字列リスト）を float にパースして analyzer.weights に反映"""
-    for i, (_, key, _) in enumerate(WEIGHT_DEFS):
-        try:
-            analyzer.weights[key] = float(field_values[i])
-        except (ValueError, KeyError):
-            pass   # 変換失敗はデフォルト値のまま
-
-
-# ─────────────────────────────────────────────
-#  重み入力画面
-# ─────────────────────────────────────────────
-
-def _box_rect(pi, wi, col_x, row_start_y, row_h):
-    return pygame.Rect(col_x[pi], row_start_y + 20 + wi * row_h, 220, 26)
-
-
-def draw_weight_input_screen(f_b, f_w, active, error_msg=""):
-    screen.fill((228, 233, 255))
-
-    title = font_title.render("進化個体 重み設定", True, (0, 60, 120))
-    screen.blit(title, (SCREEN_WIDTH // 2 - title.get_width() // 2, 18))
-
-    sub = font_medium.render("個体A(黒) と 個体B(白) の評価重みを入力してください", True, (60, 60, 60))
-    screen.blit(sub, (SCREEN_WIDTH // 2 - sub.get_width() // 2, 56))
-
-    col_x       = [SCREEN_WIDTH // 2 - 270, SCREEN_WIDTH // 2 + 50]
-    row_start_y = 100
-    row_h       = 46
-    hdrs        = ["● 個体A（黒）", "● 個体B（白）"]
-    hdr_colors  = [(30, 30, 30), (180, 50, 50)]
-
-    for pi in range(2):
-        hdr = font_medium.render(hdrs[pi], True, hdr_colors[pi])
-        screen.blit(hdr, (col_x[pi], row_start_y - 22))
-
-        fields = f_b if pi == 0 else f_w
-        for wi in range(NUM_WEIGHTS):
-            label, _, _ = WEIGHT_DEFS[wi]
-            y = row_start_y + wi * row_h
-            is_active = (active == (pi, wi))
-
-            lbl = font_small.render(label, True, (50, 50, 50))
-            screen.blit(lbl, (col_x[pi], y))
-
-            box = _box_rect(pi, wi, col_x, row_start_y, row_h)
-            bg  = (255, 255, 200) if is_active else (255, 255, 255)
-            bdr = (80, 130, 255)  if is_active else (180, 180, 180)
-            pygame.draw.rect(screen, bg,  box, border_radius=4)
-            pygame.draw.rect(screen, bdr, box, 2, border_radius=4)
-
-            val_surf = font_small.render(fields[wi] + ("|" if is_active else ""), True, (20, 20, 20))
-            screen.blit(val_surf, (box.x + 5, box.y + 5))
-
-    if error_msg:
-        err = font_small.render(error_msg, True, (200, 0, 0))
-        screen.blit(err, (SCREEN_WIDTH // 2 - err.get_width() // 2, SCREEN_HEIGHT - 105))
-
-    btn = pygame.Rect(SCREEN_WIDTH // 2 - 120, SCREEN_HEIGHT - 90, 240, 44)
-    pygame.draw.rect(screen, (60, 180, 100), btn, border_radius=8)
-    bt = font_medium.render("対戦開始！", True, (255, 255, 255))
-    screen.blit(bt, (btn.centerx - bt.get_width() // 2, btn.centery - bt.get_height() // 2))
-
-    hint = font_small.render(
-        "クリックで選択  /  Tab: 次フィールド  /  Enter: 対戦開始  /  Esc: 戻る",
-        True, (100, 100, 100))
-    screen.blit(hint, (SCREEN_WIDTH // 2 - hint.get_width() // 2, SCREEN_HEIGHT - 50))
-
-    pygame.display.flip()
-    return btn, col_x, row_start_y, row_h
-
-
-def run_weight_input_screen():
-    f_b       = make_default_fields()
-    f_w       = make_default_fields()
-    active    = (0, 0)
-    error_msg = ""
-    tab_order = [(pi, wi) for wi in range(NUM_WEIGHTS) for pi in range(2)]
-
-    while True:
-        btn, col_x, row_start_y, row_h = draw_weight_input_screen(f_b, f_w, active, error_msg)
-
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                pygame.quit(); sys.exit()
-
-            if event.type == pygame.KEYDOWN:
-                error_msg = ""
-                if event.key == pygame.K_ESCAPE:
-                    return None
-                elif event.key == pygame.K_RETURN:
-                    try:
-                        [float(v) for v in f_b + f_w]
-                        return f_b, f_w
-                    except ValueError:
-                        error_msg = "※ 数値のみ入力してください"
-                elif event.key == pygame.K_TAB:
-                    if active in tab_order:
-                        idx = tab_order.index(active)
-                        active = tab_order[(idx + 1) % len(tab_order)]
-                    else:
-                        active = tab_order[0]
-                elif active is not None:
-                    pi, wi = active
-                    fields = f_b if pi == 0 else f_w
-                    if event.key == pygame.K_BACKSPACE:
-                        fields[wi] = fields[wi][:-1]
-                    elif event.unicode in "0123456789.-":
-                        fields[wi] += event.unicode
-
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                pos = pygame.mouse.get_pos()
-                if btn.collidepoint(pos):
-                    try:
-                        [float(v) for v in f_b + f_w]
-                        return f_b, f_w
-                    except ValueError:
-                        error_msg = "※ 数値のみ入力してください"
-                    continue
-                for pi in range(2):
-                    for wi in range(NUM_WEIGHTS):
-                        if _box_rect(pi, wi, col_x, row_start_y, row_h).collidepoint(pos):
-                            active = (pi, wi)
+def sync_board(src: GomokuAnalyzer, dst: GomokuAnalyzer):
+    """src の盤面・履歴・手番を dst にコピー"""
+    dst.board          = src.board.copy()
+    dst.move_history   = copy.copy(src.move_history)
+    dst.current_player = src.current_player
 
 
 # ─────────────────────────────────────────────
 #  盤面描画
 # ─────────────────────────────────────────────
 
-def draw_board(analyzer, game_over, winner, modo=None,
-               best_move_for_display=None, fields_b=None, fields_w=None):
+def draw_board(analyzer, game_over, winner, modo=None, best_move_for_display=None):
 
     for y in range(SCREEN_HEIGHT):
         cv = 220 - (y / SCREEN_HEIGHT * 20)
@@ -273,6 +189,7 @@ def draw_board(analyzer, game_over, winner, modo=None,
                 pygame.draw.circle(screen, (255, 0, 0),
                                    (MARGIN + bc * CELL_SIZE, MARGIN + br * CELL_SIZE), 20, 3)
 
+    # 情報エリア
     ir = pygame.Rect(0, SCREEN_HEIGHT - INFO_AREA_HEIGHT, SCREEN_WIDTH, INFO_AREA_HEIGHT)
     pygame.draw.rect(screen, (240, 240, 240), ir)
     pygame.draw.line(screen, (180, 180, 180),
@@ -282,21 +199,15 @@ def draw_board(analyzer, game_over, winner, modo=None,
     title_surf = font_title.render("五目並べ AI解析ツール", True, (0, 60, 120))
     screen.blit(title_surf, (SCREEN_WIDTH // 2 - title_surf.get_width() // 2, 5))
 
-    # EvoVsEvo 専用 情報表示
-    if modo == "EvoVsEvo" and fields_b and fields_w:
-        cur    = analyzer.current_player
-        label  = "個体A（黒）" if cur == 1 else "個体B（白）"
-        color  = (20, 20, 20)  if cur == 1 else (160, 40, 40)
-        fields = fields_b if cur == 1 else fields_w
-
+    # EvoVsEvo 専用：手番の個体名を表示
+    if modo == "EvoVsEvo":
+        cur   = analyzer.current_player
+        label = "個体A（黒）" if cur == 1 else "個体B（白）"
+        color = (20, 20, 20) if cur == 1 else (160, 40, 40)
         pt = font_medium.render(f"手番: {label}", True, color)
         screen.blit(pt, (20, info_y))
-
-        # 重みサマリー（五連・活四・活三・防御係数を表示）
-        idx_map = [("五連", 0), ("活四", 1), ("活三", 3), ("防御", 6)]
-        summary = "  ".join(f"{n}:{fields[i]}" for n, i in idx_map)
-        ss = font_small.render(summary, True, (60, 60, 60))
-        screen.blit(ss, (20, info_y + 25))
+        ct = font_small.render(f"着手数: {len(analyzer.move_history)}", True, (0, 0, 0))
+        screen.blit(ct, (20, info_y + 25))
     else:
         pt = font_medium.render(
             f"現在の手番: {'黒' if analyzer.current_player == 1 else '白'}", True, (0, 0, 0))
@@ -367,7 +278,7 @@ def draw_home_screen():
         s = font_medium.render(lbl, True, (255, 255, 255))
         screen.blit(s, (btn.centerx - s.get_width()//2, btn.centery - s.get_height()//2))
 
-    note = font_small.render("重みを個別設定して進化個体同士を対戦させる", True, (120, 60, 160))
+    note = font_small.render("WEIGHTS_A / WEIGHTS_B をコードで設定して対戦", True, (120, 60, 160))
     screen.blit(note, (SCREEN_WIDTH // 2 - note.get_width() // 2, btns[3].bottom + 5))
 
     pygame.display.flip()
@@ -384,17 +295,6 @@ def draw_home_screen():
 
 
 # ─────────────────────────────────────────────
-#  盤面同期（EvoVsEvo 用）
-# ─────────────────────────────────────────────
-
-def sync_board(src: GomokuAnalyzer, dst: GomokuAnalyzer):
-    """src の盤面・履歴・手番を dst にコピー"""
-    dst.board          = src.board.copy()
-    dst.move_history   = copy.copy(src.move_history)
-    dst.current_player = src.current_player
-
-
-# ─────────────────────────────────────────────
 #  メインループ
 # ─────────────────────────────────────────────
 
@@ -408,8 +308,6 @@ def main():
     analyzer       = GomokuAnalyzer()
     analyzer_black = None
     analyzer_white = None
-    fields_b       = None
-    fields_w       = None
 
     clock             = pygame.time.Clock()
     last_ai_move_time = 0
@@ -426,29 +324,19 @@ def main():
             modo = draw_home_screen()
 
             if modo == "EvoVsEvo":
-                result = run_weight_input_screen()
-                if result is None:
-                    continue   # キャンセル → ホーム再表示
-                fields_b, fields_w = result
-
-                # 個体を生成して重みを注入
                 analyzer_black = GomokuAnalyzer()
                 analyzer_white = GomokuAnalyzer()
-                apply_weights_to_analyzer(analyzer_black, fields_b)
-                apply_weights_to_analyzer(analyzer_white, fields_w)
-
-                # 共有 analyzer は描画・着手管理のみ担当（重みは不問）
-                analyzer = GomokuAnalyzer()
+                apply_weights(analyzer_black, WEIGHTS_A)
+                apply_weights(analyzer_white, WEIGHTS_B)
+                analyzer = GomokuAnalyzer()   # 描画・着手管理用（重みは不問）
 
                 print("\n[EvoVsEvo] 重み設定:")
-                for i, (lbl, key, _) in enumerate(WEIGHT_DEFS):
-                    print(f"  {key:20s}  個体A={fields_b[i]:>10}  個体B={fields_w[i]:>10}")
+                print(f"  個体A(黒): {WEIGHTS_A}")
+                print(f"  個体B(白): {WEIGHTS_B}")
             else:
                 analyzer       = GomokuAnalyzer()
                 analyzer_black = None
                 analyzer_white = None
-                fields_b       = None
-                fields_w       = None
 
             game_over             = False
             winner                = None
@@ -509,7 +397,6 @@ def main():
             if ai_turn and current_time - last_ai_move_time > 500:
 
                 if modo == "EvoVsEvo":
-                    # 現在の盤面を手番側の個体に同期 → その個体で思考
                     if analyzer.current_player == 1:
                         sync_board(analyzer, analyzer_black)
                         analyzer_black.current_player = 1
@@ -544,8 +431,7 @@ def main():
                 last_ai_move_time = current_time
 
         # ── 描画 ────────────────────────────────
-        draw_board(analyzer, game_over, winner, modo,
-                   best_move_for_display, fields_b, fields_w)
+        draw_board(analyzer, game_over, winner, modo, best_move_for_display)
         pygame.display.flip()
         clock.tick(60)
 
