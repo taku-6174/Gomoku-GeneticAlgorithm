@@ -16,11 +16,17 @@ class GomokuAnalyzer:
             'open_three': 1500,
             'dead_three': 200,
             'open_two': 50,
-            'defense_weight': 1.2,  # 防御の重要度
+            'defense_weight': 1.2,
+            # --- 守備専用の重み ---
+            'def_open_four': 50000,
+            'def_open_three': 2000,
+            'def_dead_three': 300,
+            # --- その他の重み ---
             'fork_44': 15000, 
             'fork_43': 8000, 
             'fork_33': 3000, 
-            'center_bonus': 100
+            'center_bonus': 100,
+            'continuity_weight': 100 
         }
 
     def put_stone(self, r, c, player):
@@ -95,7 +101,7 @@ class GomokuAnalyzer:
                     max_score = score
             
             # 活三(>=1000)以上を緊急脅威として扱う（活四=12000, 五連=100000等）
-            if max_score >= 1000:
+            if max_score >= self.weights['open_three']:
                 threats.append((r, c, max_score))
         
         # スコア順（降順）にして返す
@@ -230,13 +236,14 @@ class GomokuAnalyzer:
             
             for dr, dc in directions:
                 opp_score = self.evaluate_pattern(r, c, dr, dc, opponent)
-                # 相手の強い脅しを防ぐ価値
-                if opp_score >= 10000:  # 相手の活四を防ぐ
-                    defense_score += 50000
-                elif opp_score >= 1000:  # 相手の活三を防ぐ
-                    defense_score += 2000
-                elif opp_score >= 200:   # 相手の眠三を防ぐ
-                    defense_score += 300
+                # 相手の脅威レベルに応じた防御ボーナス（防御用重みを使用）
+                if opp_score >= self.weights['open_four']:
+                    defense_score += self.weights['def_open_four']
+                elif opp_score >= self.weights['open_three']:
+                    defense_score += self.weights['def_open_three']
+                elif opp_score >= self.weights['dead_three']:
+                    defense_score += self.weights['def_dead_three']
+                # 必要に応じてさらに低い脅威（dead_twoなど）も追加可能
             
             # 中央性ボーナス
             center = self.size // 2
@@ -298,7 +305,7 @@ class GomokuAnalyzer:
                     break
             
             if count >= 2:
-                bonus += 100 * count  # 既に並んでいる石の近くに打つボーナス
+                bonus += self.weights.get('continuity_weight', 100) * count
         
         return bonus
         

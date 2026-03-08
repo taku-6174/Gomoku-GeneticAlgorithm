@@ -1,6 +1,6 @@
 # evaluate_evolution.py
 import json
-from ga_manager import Individual, play_match
+from ga_manager import Individual, play_match_worker
 from engine import GomokuAnalyzer
 
 def main():
@@ -9,7 +9,7 @@ def main():
     default_ind = Individual(weights=default.weights)
     
     # 進化個体
-    with open("best_weights_ver5.txt", "r") as f:
+    with open("best_weights_ver6.txt", "r") as f:
         best = json.load(f)
     best_ind = Individual(weights=best)
     
@@ -24,10 +24,15 @@ def main():
         "draw": 0
     }
     
-    for i in range(100):  # 1000回対戦
+    for i in range(10):  # 1000回対戦
         if i % 2 == 0:
             # 進化個体が先手、初期個体が後手
-            winner = play_match(best_ind, default_ind)
+            winner = play_match_worker((
+                best_ind.analyzer.weights,   # 先手の重み
+                default_ind.analyzer.weights, # 後手の重み
+                1,                            # depth
+                1                              # 先手 (1: 先手がbest)
+            ))
             if winner == 1:
                 results["best_first"] += 1
             elif winner == 2:
@@ -36,7 +41,12 @@ def main():
                 results["draw"] += 1
         else:
             # 初期個体が先手、進化個体が後手
-            winner = play_match(default_ind, best_ind)
+            winner = play_match_worker((
+                default_ind.analyzer.weights, # 先手の重み
+                best_ind.analyzer.weights,    # 後手の重み
+                1,                             # depth
+                1                               # 先手 (1: 先手がdefault)
+            ))
             if winner == 1:
                 results["default_first"] += 1
             elif winner == 2:
