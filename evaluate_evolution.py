@@ -9,7 +9,7 @@ def main():
     default_ind = Individual(weights=default.weights)
     
     # 進化個体
-    with open("best_weights_ver2.txt", "r") as f:
+    with open("best_weights_ver3.txt", "r") as f:
         best = ast.literal_eval(f.read())
     best_ind = Individual(weights=best)
     

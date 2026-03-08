@@ -16,7 +16,11 @@ class GomokuAnalyzer:
             'open_three': 1500,
             'dead_three': 200,
             'open_two': 50,
-            'defense_weight': 1.2  # 防御の重要度
+            'defense_weight': 1.2,  # 防御の重要度
+            'fork_44': 15000, 
+            'fork_43': 8000, 
+            'fork_33': 3000, 
+            'center_bonus': 100
         }
 
     def put_stone(self, r, c, player):
@@ -173,11 +177,12 @@ class GomokuAnalyzer:
         for dr, dc in directions:
             score = self.evaluate_pattern(r, c, dr, dc, player)
             
-            if score >= 10000:
+            # ここも本当は weights を参照するとより進化しやすくなります
+            if score >= self.weights['open_four']: # 10000の代わりに
                 threats.append('four')
-            elif score >= 1000:
+            elif score >= self.weights['open_three']: # 1000の代わりに
                 threats.append('three')
-            elif score >= 200:
+            elif score >= self.weights['dead_three']: # 200の代わりに
                 threats.append('half-three')
         
         # フォークのボーナス計算
@@ -185,12 +190,13 @@ class GomokuAnalyzer:
         three_count = threats.count('three')
         four_count = threats.count('four')
         
+        # --- 直接の数字を self.weights の項目名に変更 ---
         if four_count >= 2:
-            bonus += 15000  # 四四
+            bonus += self.weights['fork_44']  # 15000の代わり
         if four_count >= 1 and three_count >= 1:
-            bonus += 8000   # 四三
+            bonus += self.weights['fork_43']  # 8000の代わり
         if three_count >= 2:
-            bonus += 3000   # 三三
+            bonus += self.weights['fork_33']  # 3000の代わり
         
         return bonus
 
