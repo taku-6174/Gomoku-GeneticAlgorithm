@@ -4,6 +4,13 @@ import time
 import math
 from collections import defaultdict
 
+# numbaが使える場合は高速版を使用、なければ純Pythonにフォールバック
+try:
+    from evaluate_numba import evaluate_pattern_numba
+    NUMBA_AVAILABLE = True
+except ImportError:
+    NUMBA_AVAILABLE = False
+
 # ============================================================================
 # フェーズ1：パターンライブラリの定義（全基本パターンの統一）
 # ============================================================================
@@ -74,12 +81,13 @@ class GomokuAnalyzer:
         self.board = np.zeros((size, size), dtype=int)
         self.current_player = 1
         self.move_history = []
-        
+        self.transposition_table = {} 
+
         # ============================================================================
         # 改良版重み定義（フェーズ1B：構造化された重み）
         # ============================================================================
         self.weights = {
-            # === 基本パターン（攻撃） ===
+        # === 基本パターン（攻撃） ===
             'five': 100000,
             'guaranteed_four': 50000,
             'open_four': 12000,
@@ -226,87 +234,60 @@ class GomokuAnalyzer:
         return front_open, back_open, pos_count, neg_count
 
     def evaluate_pattern_hierarchical(self, r, c, dr, dc, player):
-        """
-        改良版：9マスの文字列パターンマッチングで全パターンを統一判定
-        
-        跳び三（●.●●.や●●.●.）を活三として正しく評価
-        五連・活四・死四の判定も正確に
-        
-        Args:
-            r, c: 着手位置
-            dr, dc: 判定方向
-            player: プレイヤー（1 or 2）
-        
-        Returns:
-            パターンのスコア
-        """
-        # 9マス取得（r,c を中心に前後4マス）
-        line = []
-        for i in range(-4, 5):
-            nr, nc = r + dr * i, c + dc * i
-            if self.is_within_board(nr, nc):
-                val = self.board[nr][nc] if i != 0 else player
-                line.append(val)
-            else:
-                line.append(-1)  # 盤外は -1
-        
-        s = "".join([str(x) if x != -1 else "X" for x in line])
-        p = str(player)
-        o = "0"
-        opponent = 3 - player
-        opp_str = str(opponent)
-        
-        # === 五連以上 ===
-        if p * 5 in s:
-            return self.weights['five']
-        
-        # === 活四（両端空き：.●●●●.） ===
-        if f"{o}{p*4}{o}" in s:
-            return self.weights['open_four']
-        
-        # === 死四（片端or両端塞がり） ===
-        # ●●●●（盤外or相手石に隣接）
-        dead_four_patterns = [
-            p*4,                    # ●●●●
-            f"X{p*4}",              # 盤外●●●●
-            f"{p*4}X",              # ●●●●盤外
-            f"{opp_str}{p*4}",      # 相手●●●●
-            f"{p*4}{opp_str}",      # ●●●●相手
-        ]
-        if any(pat in s for pat in dead_four_patterns):
-            return self.weights['dead_four']
-        
-        # === 活三（両端空き） ===
-        # 通常: .●●●.
-        if f"{o}{p*3}{o}" in s:
-            return self.weights['open_three']
-        
-        # === 跳び三の全パターン ===
-        # .●.●●. または .●●.●. などの形式
-        skip_three_patterns = [
-            f"{o}{p}{o}{p*2}{o}",   # .●.●●.
-            f"{o}{p*2}{o}{p}{o}",   # .●●.●.
-        ]
-        if any(pat in s for pat in skip_three_patterns):
-            return self.weights['open_three']
-        
-        # === 死三（片端塞がり） ===
-        # ●●●（盤外or相手石に隣接）
-        dead_three_patterns = [
-            p*3,                    # ●●●
-            f"X{p*3}",              # 盤外●●●
-            f"{p*3}X",              # ●●●盤外
-            f"{opp_str}{p*3}",      # 相手●●●
-            f"{p*3}{opp_str}",      # ●●●相手
-        ]
-        if any(pat in s for pat in dead_three_patterns):
-            return self.weights['dead_three']
-        
-        # === 活二 ===
-        if f"{o}{p*2}{o}" in s:
-            return self.weights['open_two']
-        
-        return 0
+        w = self.weights
+        weights_array = np.array([
+            w['five'],
+            w['open_four'],
+            w['dead_four'],
+            w['open_three'],
+            w['dead_three'],
+            w['open_two']
+        ], dtype=np.float64)
+
+        if NUMBA_AVAILABLE:
+            return evaluate_pattern_numba(
+                self.board, r, c, dr, dc, player, weights_array, self.size
+            )
+        else:
+            # === 純Pythonフォールバック（numbaなし） ===
+            # 9マス取得（r,c を中心に前後4マス）
+            line = []
+            for i in range(-4, 5):
+                nr, nc = r + dr * i, c + dc * i
+                if self.is_within_board(nr, nc):
+                    val = self.board[nr][nc] if i != 0 else player
+                    line.append(val)
+                else:
+                    line.append(-1)
+
+            s = "".join([str(x) if x != -1 else "X" for x in line])
+            p = str(player)
+            o = "0"
+            opp_str = str(3 - player)
+
+            if p * 5 in s:
+                return w['five']
+            if f"{o}{p*4}{o}" in s:
+                return w['open_four']
+            dead_four_patterns = [p*4, f"X{p*4}", f"{p*4}X",
+                                   f"{opp_str}{p*4}", f"{p*4}{opp_str}"]
+            if any(pat in s for pat in dead_four_patterns):
+                return w['dead_four']
+            if f"{o}{p*3}{o}" in s:
+                return w['open_three']
+            skip_three_patterns = [
+                f"{o}{p}{o}{p*2}{o}",
+                f"{o}{p*2}{o}{p}{o}",
+            ]
+            if any(pat in s for pat in skip_three_patterns):
+                return w['open_three']
+            dead_three_patterns = [p*3, f"X{p*3}", f"{p*3}X",
+                                    f"{opp_str}{p*3}", f"{p*3}{opp_str}"]
+            if any(pat in s for pat in dead_three_patterns):
+                return w['dead_three']
+            if f"{o}{p*2}{o}" in s:
+                return w['open_two']
+            return 0
     
     def evaluate_pattern(self, r, c, dr, dc, player):
         """
@@ -405,9 +386,9 @@ class GomokuAnalyzer:
         """
         # ✅ 動的な最大深さ設定
         if len(self.move_history) < 10:
-            max_depth = 2
-        elif len(self.move_history) < 40:
             max_depth = 3
+        elif len(self.move_history) < 40:
+            max_depth = 4
         else:
             max_depth = 4
         
@@ -920,6 +901,9 @@ class GomokuAnalyzer:
             use_mcts: True の場合、MCTS を使用
             mcts_iterations: MCTS のシミュレーション回数
         """
+        # 1手ごとにTTをリセット（異なる重みセット間でキャッシュが混在しないように）
+        self.transposition_table = {}
+
         player = self.current_player
         opponent = 3 - self.current_player
         candidate_moves = self.get_candidate_moves()
@@ -1046,21 +1030,37 @@ class GomokuAnalyzer:
         return '\n'.join(state)
 
     def minimax(self, depth, alpha, beta, maximizing_player, last_move=None, ai_player=None):
-        """αβ枝切り付きミニマックス法"""
         if ai_player is None:
             ai_player = self.current_player
-        
+
+        # 勝敗確認
         if last_move:
             r, c = last_move
             moving_player = ai_player if maximizing_player else (3 - ai_player)
             if self.check_win(r, c, moving_player):
                 return 1000000 if moving_player == ai_player else -1000000
-        
+
         if depth == 0:
             return self.quick_evaluate(ai_player)
-        
+
+        # ★ 修正1: TTキーに盤面＋深さ＋手番＋プレイヤーを含める
+        # 盤面だけだと「深さ違い」「手番違い」の状況で誤ったキャッシュを返すバグを修正
+        tt_key = (self.board.tobytes(), depth, maximizing_player, ai_player)
+
+        if tt_key in self.transposition_table:
+            cached_score, flag = self.transposition_table[tt_key]
+            if flag == 'exact':
+                return cached_score
+            elif flag == 'lower':
+                alpha = max(alpha, cached_score)
+            elif flag == 'upper':
+                beta = min(beta, cached_score)
+            if alpha >= beta:
+                return cached_score
+
+        original_alpha = alpha
         moves = self.get_ordered_moves(ai_player if maximizing_player else (3 - ai_player))
-        
+
         if maximizing_player:
             val = -float('inf')
             for r, c in moves:
@@ -1071,7 +1071,6 @@ class GomokuAnalyzer:
                 alpha = max(alpha, val)
                 if beta <= alpha:
                     break
-            return val
         else:
             val = float('inf')
             opponent = 3 - ai_player
@@ -1083,7 +1082,17 @@ class GomokuAnalyzer:
                 beta = min(beta, val)
                 if beta <= alpha:
                     break
-            return val
+
+        # TTに保存（exact/lower/upperを区別して精度を保つ）
+        if val <= original_alpha:
+            flag = 'upper'
+        elif val >= beta:
+            flag = 'lower'
+        else:
+            flag = 'exact'
+        self.transposition_table[tt_key] = (val, flag)
+
+        return val
 
     def get_ordered_moves(self, player):
         """評価値の高い順に手をソート"""
@@ -1122,22 +1131,95 @@ class GomokuAnalyzer:
         return score
 
     def quick_evaluate(self, player):
-        """軽量評価関数"""
+        """
+        軽量評価関数
+        - numbaが使える場合: evaluate_pattern_numba（JIT高速化）を使用
+        - numbaがない場合: 純Pythonのフォールバックで動作
+        どちらもself.weightsを反映するのでGAの進化が正しく機能する
+        """
+        opponent = 3 - player
+
         if self.check_win_anywhere(player):
             return 100000
-        if self.check_win_anywhere(3 - player):
+        if self.check_win_anywhere(opponent):
             return -100000
-        
-        score = 0
-        opponent = 3 - player
-        
-        for r in range(self.size):
-            for c in range(self.size):
-                if self.board[r][c] == player:
-                    score += self.evaluate_single_stone(r, c, player)
-                elif self.board[r][c] == opponent:
-                    score -= self.evaluate_single_stone(r, c, opponent)
-        
+
+        directions = [(0, 1), (1, 0), (1, 1), (1, -1)]
+        score = 0.0
+
+        if NUMBA_AVAILABLE:
+            # === numba版（高速） ===
+            weights_arr = np.array([
+                self.weights['five'],
+                self.weights['open_four'],
+                self.weights['dead_four'],
+                self.weights['open_three'],
+                self.weights['dead_three'],
+                self.weights['open_two'],
+            ], dtype=np.float64)
+
+            for r in range(self.size):
+                for c in range(self.size):
+                    cell = self.board[r][c]
+                    if cell == 0:
+                        continue
+                    if cell == player:
+                        for dr, dc in directions:
+                            score += evaluate_pattern_numba(
+                                self.board, r, c, dr, dc, player, weights_arr, self.size
+                            )
+                    else:
+                        for dr, dc in directions:
+                            opp_val = evaluate_pattern_numba(
+                                self.board, r, c, dr, dc, opponent, weights_arr, self.size
+                            )
+                            score -= opp_val * self.weights['defense_weight']
+        else:
+            # === 純Pythonフォールバック版（numbaなしでも動く） ===
+            for r in range(self.size):
+                for c in range(self.size):
+                    cell = self.board[r][c]
+                    if cell == 0:
+                        continue
+
+                    check_player = cell
+                    is_self = (cell == player)
+
+                    for dr, dc in directions:
+                        count = 1
+                        for i in range(1, 5):
+                            nr, nc = r + dr * i, c + dc * i
+                            if not self.is_within_board(nr, nc):
+                                break
+                            if self.board[nr][nc] == check_player:
+                                count += 1
+                            else:
+                                break
+                        for i in range(1, 5):
+                            nr, nc = r - dr * i, c - dc * i
+                            if not self.is_within_board(nr, nc):
+                                break
+                            if self.board[nr][nc] == check_player:
+                                count += 1
+                            else:
+                                break
+
+                        if count >= 5:
+                            val = self.weights['five']
+                        elif count == 4:
+                            val = self.weights['open_four']
+                        elif count == 3:
+                            val = self.weights['open_three']
+                        elif count == 2:
+                            val = self.weights['open_two']
+                        else:
+                            val = 0
+
+                        if is_self:
+                            score += val
+                        else:
+                            score -= val * self.weights['defense_weight']
+
         return score
 
     def evaluate_single_stone(self, r, c, player):

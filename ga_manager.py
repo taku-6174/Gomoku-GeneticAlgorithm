@@ -7,9 +7,27 @@ import matplotlib.pyplot as plt
 import matplotlib
 import time
 import os
+import csv
 
-# matplotlib で日本語対応（必要に応じて）
-# matplotlib.rcParams['font.sans-serif'] = ['DejaVu Sans']
+# ============================================================================
+# 修正サマリー（オリジナルからの変更点）
+# ============================================================================
+# 修正1: 引き分けスコア 0.2 → 0.0
+#        理由: 引き分けで点がもらえると防御過多・引き分け量産の個体に収束するため
+#
+# 修正2: fitness正規化を「全個体共通の平均試合数」→「個体ごとの実際の試合数」に変更
+#        理由: 試合数が多い個体ほど勝率が低く計算されていたバグを修正
+#
+# 修正3: Hall of Fameをfitnessの高い順でソートして保持
+#        理由: 弱い世代の1位が歴代最強を押し出すバグを修正
+#
+# 修正4: トーナメント選択をエリートだけでなく全個体から選ぶよう変更
+#        理由: エリートだけから選ぶと早期収束・多様性消失が起きていた
+#
+# 修正5: 探索深さの最低値を1→2（初期）、2→3（以降）に引き上げ
+#        理由: depth=2だと重みの差が結果に出にくく、GAが強さを正確に判断できなかった
+# ============================================================================
+
 
 # ============================================================================
 # フェーズ1B：並列処理用ワーカー関数（トップレベル配置）
@@ -144,15 +162,16 @@ class Generation:
 
     def _get_depth_schedule(self):
         """
-        世代が進むにつれて探索深さを増やす（フェーズ1B）
+        修正5: 探索深さを引き上げ（最低3）
+        depth=2だと重みの差が結果に出にくいため、最低でも3に設定
         """
         def schedule(generation):
             if generation < 10:
-                return 1  # 初期10世代は depth=1（高速化）
+                return 2  # 初期10世代は depth=2
+            elif generation < 30:
+                return 3  # 10〜30世代は depth=3
             else:
-                return 2  # 11世代以降は depth=2
-            
-        
+                return 4  # 以降もdepth=3を維持（速度と精度のバランス）
         return schedule
 
     def evaluate_all(self):
@@ -201,11 +220,9 @@ class Generation:
         
         # 並列実行
         print(f"  {len(tasks)} 試合を並列実行中...")
-        with ProcessPoolExecutor(max_workers=8) as executor:
+        with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
             results = list(executor.map(play_match_worker, tasks))
         
-        # デバッグ出力：実際に並列実行されたか確認
-        print(f"  実行完了: {len(results)} 件の対戦結果を取得")
         
         # 個体の fitness をリセット
         for ind in self.individuals:
@@ -221,46 +238,38 @@ class Generation:
             if (start_player == 1 and winner == 1) or (start_player == 2 and winner == 2):
                 self.individuals[owner_idx].fitness += 1.0
             elif winner == 0:
-                self.individuals[owner_idx].fitness += 0.2  # 引き分け
+                self.individuals[owner_idx].fitness += 0.0  # 修正1: 引き分けは0点（勝ちにいく戦略を強制）
         
-        # 勝率（%）に正規化
-        matches_per_ind = len(tasks) // len(self.individuals)
-        if matches_per_ind > 0:
-            for ind in self.individuals:
-                ind.fitness = (ind.fitness / matches_per_ind) * 100
+        # 修正2: 個体ごとの実際の試合数でfitness正規化
+        match_counts = [0] * len(self.individuals)
+        for owner_idx in task_owner:
+            match_counts[owner_idx] += 1
         
-        # デバッグ出力：タスク所有者の正確性チェック
-        print(f"\n  === タスク所有者の検証 ===")
-        print(f"  総タスク数: {len(tasks)}")
-        print(f"  個体数: {len(self.individuals)}")
-        print(f"  1個体あたりの平均試合数: {matches_per_ind:.1f}")
-        for idx in range(min(3, len(self.individuals))):  # 最初の3個体だけ表示
-            count = sum(1 for owner in task_owner if owner == idx)
-            print(f"    個体{idx}: {count}試合")
+        for idx, ind in enumerate(self.individuals):
+            if match_counts[idx] > 0:
+                ind.fitness = (ind.fitness / match_counts[idx]) * 100
+        
 
     def update_hall_of_fame(self):
         """
-        Hall of Fame を更新（上位5体を保持）
-        
-        改良版：更新時にデバッグ情報を出力
+        Hall of Fame を更新（歴代最強上位5体を保持）
+        修正3: fitnessの高い順でソートして真の最強個体を保持
         """
-        # 現世代で fitness の高い順にソート
         self.individuals.sort(key=lambda x: x.fitness, reverse=True)
-        
-        # 現世代の1位を Hall of Fame に追加
         best_ind = self.individuals[0]
-        self.hall_of_fame.append(best_ind)
         
-        # 上位5体のみ保持
-        if len(self.hall_of_fame) > 5:
-            self.hall_of_fame = self.hall_of_fame[:5]
+        # 現世代1位をHoFに追加（コピーして保持）
+        hof_candidate = Individual(
+            weights=best_ind.analyzer.weights.copy(),
+            depth=best_ind.depth
+        )
+        hof_candidate.fitness = best_ind.fitness
+        self.hall_of_fame.append(hof_candidate)
         
-        # デバッグ出力
-        print(f"  Hall of Fame 更新:")
-        print(f"    現世代1位の勝率: {best_ind.fitness:.2f}%")
-        print(f"    現在のHoF保有数: {len(self.hall_of_fame)}")
-        if len(self.hall_of_fame) >= 2:
-            print(f"    HoF 2位の勝率: {self.hall_of_fame[1].fitness:.2f}%")
+        # fitnessの高い順にソートして上位5体のみ保持
+        self.hall_of_fame.sort(key=lambda x: x.fitness, reverse=True)
+        self.hall_of_fame = self.hall_of_fame[:5]
+        
 
     def evolve(self):
         """
@@ -278,9 +287,6 @@ class Generation:
             depth=ind.depth
         ) for ind in self.individuals[:elite_count]]
         
-        print(f"  === 次世代生成 ===")
-        print(f"    エリート保存数: {elite_count}")
-        print(f"    交叉・突然変異で生成: {len(self.individuals) - elite_count}")
         
         # 残りの枠を子供で埋める（ルーレット選択 + 交叉 + 突然変異）
         while len(next_gen) < len(self.individuals):
@@ -311,9 +317,10 @@ class Generation:
 
     def _tournament_selection(self, elite_count, k=3):
         """
-        トーナメント選択：k個体をランダムに選び、最も fitness が高い個体を親に
+        修正4: トーナメント選択を全個体から行う（エリートだけでなく）
+        多様性を保つため、集団全体からk個体をランダムに選んでトーナメント
         """
-        selected = random.sample(self.individuals[:elite_count], min(k, elite_count))
+        selected = random.sample(self.individuals, min(k, len(self.individuals)))
         return max(selected, key=lambda x: x.fitness)
 
 # ============================================================================
@@ -346,7 +353,118 @@ def save_fitness_graph(history, filename='evolution_graph.png'):
     plt.close()
 
 
+def save_fitness_with_depth_graph(history, filename='evolution_with_depth.png'):
+    """
+    推奨グラフ1：勝率 + 探索深さの同時推移
+    
+    左軸：勝率（%）
+    右軸：探索深さ（段階）
+    """
+    gens = [h['gen'] for h in history]
+    best_fits = [h['best_fitness'] for h in history]
+    avg_fits = [h['avg_fitness'] for h in history]
+    avg_depths = [h['avg_depth'] for h in history]
+    
+    fig, ax1 = plt.subplots(figsize=(14, 7))
+    
+    # 左軸：勝率
+    ax1.set_xlabel('Generation', fontsize=12)
+    ax1.set_ylabel('Fitness (Win %)', fontsize=12, color='tab:blue')
+    ax1.plot(gens, best_fits, marker='o', label='Best Fitness', color='blue', linewidth=2.5)
+    ax1.plot(gens, avg_fits, marker='s', label='Average Fitness', color='lightblue', linewidth=2)
+    ax1.tick_params(axis='y', labelcolor='tab:blue')
+    ax1.set_ylim(0, 100)
+    ax1.grid(True, alpha=0.3, axis='y')
+    
+    # 右軸：探索深さ
+    ax2 = ax1.twinx()
+    ax2.set_ylabel('Average Search Depth', fontsize=12, color='tab:red')
+    ax2.plot(gens, avg_depths, marker='^', label='Average Depth', color='red', linewidth=2.5, linestyle='--')
+    ax2.tick_params(axis='y', labelcolor='tab:red')
+    ax2.set_ylim(0, 4)
+    
+    # タイトルと凡例
+    fig.suptitle('AI Evolution: Fitness & Search Depth', fontsize=14, fontweight='bold')
+    
+    # 凡例を統合
+    lines1, labels1 = ax1.get_legend_handles_labels()
+    lines2, labels2 = ax2.get_legend_handles_labels()
+    ax1.legend(lines1 + lines2, labels1 + labels2, loc='center left', fontsize=10)
+    
+    fig.tight_layout()
+    fig.savefig(filename, dpi=150)
+    print(f"グラフを {filename} として保存しました。")
+    plt.close()
 
+
+def save_fitness_distribution_graph(history, filename='fitness_distribution.png'):
+    """
+    推奨グラフ2：箱ひげ図で個体群の多様性を表示
+    
+    各世代での勝率分布を可視化
+    """
+    gens = [h['gen'] for h in history]
+    best_fits = [h['best_fitness'] for h in history]
+    avg_fits = [h['avg_fitness'] for h in history]
+    worst_fits = [h['worst_fitness'] for h in history]
+    
+    fig, ax = plt.subplots(figsize=(14, 7))
+    
+    # 上限・下限の帯をプロット
+    ax.fill_between(gens, worst_fits, best_fits, alpha=0.3, color='lightblue', label='Range (Worst~Best)')
+    ax.plot(gens, best_fits, marker='o', color='darkblue', linewidth=2, label='Best')
+    ax.plot(gens, avg_fits, marker='s', color='orange', linewidth=2, label='Average')
+    ax.plot(gens, worst_fits, marker='v', color='red', linewidth=2, label='Worst')
+    
+    ax.set_xlabel('Generation', fontsize=12)
+    ax.set_ylabel('Fitness (Win %)', fontsize=12)
+    ax.set_title('Fitness Distribution Across Generations', fontsize=14, fontweight='bold')
+    ax.legend(fontsize=10, loc='lower right')
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim(0, 100)
+    
+    fig.tight_layout()
+    fig.savefig(filename, dpi=150)
+    print(f"グラフを {filename} として保存しました。")
+    plt.close()
+
+
+def save_weights_history_csv(history, filename='weights_evolution.csv'):
+    """
+    推奨ファイル3：重みの進化過程をCSVで記録
+    
+    重要な重みを抽出して、世代ごとに記録
+    Excelやグラフツールで分析可能
+    """
+    # 記録する重みのキー（重要なものだけ）
+    important_keys = [
+        'open_four', 'open_three', 'dead_four', 'dead_three',
+        'fork_44', 'fork_43', 'fork_33',
+        'defense_weight', 'def_open_four', 'def_open_three',
+        'center_bonus', 'continuity_weight'
+    ]
+    
+    with open(filename, 'w', newline='', encoding='utf-8') as f:
+        fieldnames = ['gen', 'best_fitness', 'avg_fitness'] + important_keys
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        
+        writer.writeheader()
+        
+        for h in history:
+            row = {
+                'gen': h['gen'],
+                'best_fitness': round(h['best_fitness'], 2),
+                'avg_fitness': round(h['avg_fitness'], 2),
+            }
+            
+            # 重みを追加
+            weights = h['weights']
+            for key in important_keys:
+                row[key] = round(weights.get(key, 0), 2)
+            
+            writer.writerow(row)
+    
+    print(f"重み進化履歴を {filename} として保存しました。")
 
 
 def save_weights_history_json(history, filename='weights_history.json'):
@@ -357,6 +475,49 @@ def save_weights_history_json(history, filename='weights_history.json'):
         json.dump(history, f, indent=2, ensure_ascii=False)
     print(f"重み履歴をJSON形式で {filename} として保存しました。")
 
+
+def save_best_weights_detailed(best_weights, filename='best_weights_detailed.txt'):
+    """
+    最良個体の重みを詳細テキストで保存
+    
+    カテゴリごとに分類した形式
+    """
+    with open(filename, 'w', encoding='utf-8') as f:
+        f.write("=" * 70 + "\n")
+        f.write("最良個体の重み詳細\n")
+        f.write("=" * 70 + "\n\n")
+        
+        # === 基本パターン（攻撃） ===
+        f.write("【基本パターン（攻撃評価）】\n")
+        attack_keys = ['five', 'guaranteed_four', 'open_four', 'dead_four', 'open_three', 'dead_three', 'open_two']
+        for key in attack_keys:
+            if key in best_weights:
+                f.write(f"  {key:.<30} {best_weights[key]:>10.2f}\n")
+        
+        # === フォーク・両見 ===
+        f.write("\n【フォーク・両見評価】\n")
+        fork_keys = ['fork_44', 'fork_43', 'fork_33', 'both_open_threats']
+        for key in fork_keys:
+            if key in best_weights:
+                f.write(f"  {key:.<30} {best_weights[key]:>10.2f}\n")
+        
+        # === 防御関連 ===
+        f.write("\n【防御関連】\n")
+        defense_keys = ['defense_weight', 'def_open_four', 'def_open_three', 'def_dead_three', 'def_multiple_threats']
+        for key in defense_keys:
+            if key in best_weights:
+                f.write(f"  {key:.<30} {best_weights[key]:>10.2f}\n")
+        
+        # === その他 ===
+        f.write("\n【その他】\n")
+        other_keys = ['center_bonus', 'continuity_weight', 'mcts_simulation_depth']
+        for key in other_keys:
+            if key in best_weights:
+                f.write(f"  {key:.<30} {best_weights[key]:>10.2f}\n")
+        
+        f.write("\n" + "=" * 70 + "\n")
+    
+    print(f"詳細重みを {filename} として保存しました。")
 
 # ============================================================================
 # メイン実行
@@ -463,6 +624,7 @@ if __name__ == "__main__":
     save_fitness_graph(history)
     save_weights_history_json(history)
     
+    
     # 進化の統計情報を表示
     print(f"\n【進化の統計情報】")
     print(f"  初代最高勝率: {history[0]['best_fitness']:.2f}%")
@@ -475,5 +637,6 @@ if __name__ == "__main__":
     print(f"  evolution_graph.png ................. 基本グラフ（勝率推移）")
     print(f"  best_weights.txt ................... 最良重み（JSON形式）")
     print(f"  weights_history.json .............. 全世代重み履歴（JSON）")
+
     
     print("\nプログラム完了。")
