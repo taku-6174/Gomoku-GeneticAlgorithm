@@ -241,7 +241,7 @@ class GomokuAnalyzer:
             # 中央性ボーナス
             center = self.size // 2
             distance = abs(r - center) + abs(c - center)
-            center_bonus = max(0, 10 - distance) * 100
+            center_bonus = max(0, 10 - distance) * self.weights.get('center_bonus', 100)
             
             # 既存の脅しを活かすボーナス
             continuity_bonus = self.continuity_bonus(r, c, for_player)

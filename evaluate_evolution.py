@@ -1,4 +1,5 @@
 # evaluate_evolution.py
+import json
 from ga_manager import Individual, play_match
 from engine import GomokuAnalyzer
 import ast
@@ -9,11 +10,12 @@ def main():
     default_ind = Individual(weights=default.weights)
     
     # 進化個体
-    with open("best_weights_ver3.txt", "r") as f:
-        best = ast.literal_eval(f.read())
+    with open("best_weights_ver4.txt", "r") as f:
+        best = json.load(f)
     best_ind = Individual(weights=best)
     
     # 対戦実行
+    print("進化個体と初期個体の対戦を開始...")
     results = {"best_win": 0, "default_win": 0, "draw": 0}
     
     for i in range(100):  # 100回対戦
