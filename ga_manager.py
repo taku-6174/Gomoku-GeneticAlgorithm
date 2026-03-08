@@ -53,43 +53,43 @@ class Generation:
     def evaluate_all(self, elite=None):
         print(f"第 {self.generation_number} 世代の評価中...")
         
-        total_matches = 0  # 初期化
-        
+        # あなたが最初に決めた「初期値」を持つ個体を生成
+        default_analyzer = GomokuAnalyzer()
+        default_ind = Individual(weights=default_analyzer.weights)
+
         for ind1 in self.individuals:
             ind1.fitness = 0.0
-            others = [i for i in self.individuals if i != ind1]
             
-            # 対戦相手を決める
+            # 対戦相手の数を3人に増やす
+            opponents = [default_ind] + random.sample([i for i in self.individuals if i != ind1], 2)  # 初期個体＋仲間2人
             if elite:
-                # エリート＋ランダム1人（合計2人）
-                opponents = [elite] + random.sample(others, 1)
+                opponents.append(elite)
             else:
-                opponents = random.sample(others, 2)
-            
-            games_per_pair = 2
+                # 最初の世代は仲間から選ぶ
+                others = [i for i in self.individuals if i != ind1]
+                opponents.append(random.choice(others))
+
+            games_per_pair = 4 
             for opponent in opponents:
                 for game in range(games_per_pair):
-                    total_matches += 1
+                    # ここは以前と同じ勝敗ロジック
                     if game % 2 == 0:
                         winner = play_match(ind1, opponent, depth=1)
-                        if winner == 1:
-                            ind1.fitness += 1
+                        if winner == 1: ind1.fitness += 1
                     else:
                         winner = play_match(opponent, ind1, depth=1)
-                        if winner == 2:
-                            ind1.fitness += 1
-            
-            # 勝率計算
+                        if winner == 2: ind1.fitness += 1
+
+            # 勝率（%）に変換
             ind1.fitness = (ind1.fitness / (len(opponents) * games_per_pair)) * 100
         
-        print(f"評価完了 総対戦数: {total_matches}")
 
     def evolve(self):
         # fitnessの高い順にソート
         self.individuals.sort(key=lambda x: x.fitness, reverse=True)
         
         # 上位25%（エリート）を残す（最低1体）
-        elite_count = max(1, len(self.individuals) // 10)
+        elite_count = max(1, len(self.individuals) // 4)
         next_gen = self.individuals[:elite_count]
         
         # 残りの枠を子供で埋める

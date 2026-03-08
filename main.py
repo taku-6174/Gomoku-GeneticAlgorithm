@@ -295,8 +295,6 @@ def main():
 
     clock = pygame.time.Clock()
     
-    # AIの思考時間設定
-    ai_thinking_time = 500
     last_ai_move_time = 0
     best_move_for_display = None
 
