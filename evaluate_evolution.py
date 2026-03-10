@@ -10,7 +10,7 @@ def main():
     default_ind = Individual(weights=default.weights)
 
     # 進化個体
-    with open("best_weights.txt", "r") as f:
+    with open("best_ever_weights.txt", "r") as f:
         best = json.load(f)
     best_ind = Individual(weights=best)
 
