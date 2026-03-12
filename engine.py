@@ -441,22 +441,22 @@ class GomokuAnalyzer:
         """静的評価関数のみを使用（急所検出付き）"""
         candidate_moves = self.get_candidate_moves()
         
-        # 【最優先：相手の即勝ち手を防ぐ】
+        # 【最優先：自分の即勝ち手があれば指す】
+        for r, c in candidate_moves:
+            self.board[r][c] = self.current_player
+            if self.check_win(r, c, self.current_player):
+                self.board[r][c] = 0
+                #print(f"  → 勝利急所（static）！({r}, {c}) に着手して勝利")
+                return (r, c)
+            self.board[r][c] = 0
+
+        # 【次優先：相手の即勝ち手を防ぐ】
         opponent = 3 - self.current_player
         for r, c in candidate_moves:
             self.board[r][c] = opponent
             if self.check_win(r, c, opponent):
                 self.board[r][c] = 0
                 #print(f"  → 防御急所（static）！({r}, {c}) に着手してブロック")
-                return (r, c)
-            self.board[r][c] = 0
-        
-        # 【自分の即勝ち手があれば指す】
-        for r, c in candidate_moves:
-            self.board[r][c] = self.current_player
-            if self.check_win(r, c, self.current_player):
-                self.board[r][c] = 0
-                #print(f"  → 勝利急所（static）！({r}, {c}) に着手して勝利")
                 return (r, c)
             self.board[r][c] = 0
         
