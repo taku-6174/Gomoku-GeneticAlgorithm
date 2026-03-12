@@ -1,0 +1,17 @@
+{
+    "five": 100000,
+    "open_four": 12000,
+    "dead_four": 5000,
+    "open_three": 1500,
+    "dead_three": 200,
+    "open_two": 50,
+    "defense_weight": 1.2,
+    "def_open_four": 50000,
+    "def_open_three": 2000,
+    "def_dead_three": 300,
+    "fork_44": 15000,
+    "fork_43": 8000,
+    "fork_33": 3000,
+    "center_bonus": 100,
+    "continuity_weight": 100
+}

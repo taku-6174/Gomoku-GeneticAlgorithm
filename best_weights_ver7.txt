@@ -1,0 +1,21 @@
+{
+    "five": 109510.95863391062,
+    "guaranteed_four": 26332.066358863965,
+    "open_four": 5169.571572817175,
+    "dead_four": 3636.0535330063676,
+    "open_three": 985.2546606560137,
+    "dead_three": 123.45844472060884,
+    "open_two": 48.05839796439489,
+    "fork_44": 18270.34455734747,
+    "fork_43": 3486.5931540669803,
+    "fork_33": 3378.1244852626514,
+    "both_open_threats": 13994.334441363246,
+    "defense_weight": 2.0,
+    "def_open_four": 34781.371854106495,
+    "def_open_three": 1297.5240058651093,
+    "def_dead_three": 306.46735368951124,
+    "def_multiple_threats": 18408.404037948025,
+    "center_bonus": 158.00530549505237,
+    "continuity_weight": 86.2843285356565,
+    "mcts_simulation_depth": 5
+}

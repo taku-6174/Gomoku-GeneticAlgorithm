@@ -75,12 +75,12 @@ class Individual:
         self.fitness = 0.0
 
     def randomize_weights(self):
-        """初期重みに対して加算的にランダム化"""
+        """初期重みの±10%以内でランダム化（基準個体付近からスタート）"""
         for key in self.analyzer.weights:
             if key == 'defense_weight':
-                self.analyzer.weights[key] = random.uniform(0.8, 2.0)
+                self.analyzer.weights[key] = random.uniform(0.9, 1.5)
             else:
-                self.analyzer.weights[key] += random.uniform(-100, 100)
+                self.analyzer.weights[key] *= random.uniform(0.9, 1.1)
                 self.analyzer.weights[key] = max(1, self.analyzer.weights[key])
 
     def mutate(self, mutation_rate=0.2, mutation_ratio=0.15):
@@ -91,7 +91,6 @@ class Individual:
                     self.analyzer.weights[key] *= random.uniform(0.85, 1.15)
                     self.analyzer.weights[key] = max(0.5, min(3.0, self.analyzer.weights[key]))
                 else:
-                    # ±15%の範囲で乗算変異
                     self.analyzer.weights[key] *= random.uniform(1 - mutation_ratio, 1 + mutation_ratio)
                     self.analyzer.weights[key] = max(1, self.analyzer.weights[key])
 
@@ -110,7 +109,6 @@ class Generation:
 
         tasks = []
         task_owner = []
-        task_ind_player = []  # 各タスクで個体が何番プレイヤーか
 
         for idx, ind in enumerate(self.individuals):
             # 対戦相手リスト
@@ -125,18 +123,12 @@ class Generation:
             if others:
                 opponents.extend(random.sample(others, min(len(others), 3)))
 
-            # 各相手と先手・後手1回ずつ（2試合/相手）
+            # 先手のみ（個体=player1, 相手=player2）
             for opp_w in opponents:
-                # 先手: 個体=player1, 相手=player2
                 tasks.append((ind.analyzer.weights, opp_w, FIXED_DEPTH, 1))
                 task_owner.append(idx)
-                task_ind_player.append(1)  # 個体はplayer1
-                # 後手: 相手=player1, 個体=player2
-                tasks.append((opp_w, ind.analyzer.weights, FIXED_DEPTH, 1))
-                task_owner.append(idx)
-                task_ind_player.append(2)  # 個体はplayer2
 
-        print(f"  {len(tasks)} 試合を並列実行中...")
+        print(f"  {len(tasks)} 試合を並列実行中（先手専用）...")
         with ProcessPoolExecutor(max_workers=os.cpu_count()) as executor:
             results = list(executor.map(play_match_worker, tasks))
 
@@ -144,13 +136,12 @@ class Generation:
         for ind in self.individuals:
             ind.fitness = 0.0
 
-        # 個体が何番プレイヤーかに応じて勝敗判定
+        # 個体は常にplayer1（先手）なのでwinner==1で勝利
         for i, winner in enumerate(results):
             owner_idx = task_owner[i]
-            ind_player = task_ind_player[i]
-            if winner == ind_player:  # 個体が勝った場合のみ加算
+            if winner == 1:
                 self.individuals[owner_idx].fitness += 1.0
-            # 引き分け・負けは0点
+            # 引き分け・負けは0点（先手なので引き分けもペナルティ的に扱う）
 
         # 個体ごとの実際の試合数で正規化
         match_counts = [0] * len(self.individuals)
@@ -292,17 +283,11 @@ if __name__ == "__main__":
     print(f"最終世代最高勝率: {history[-1]['best_fitness']:.2f}%")
     print(f"改善幅:           {history[-1]['best_fitness'] - history[0]['best_fitness']:.2f}%")
 
-    # 最良重みを保存
+    # 最終世代の最良重みを保存
     best_weights = history[-1]['weights']
     with open("best_weights.txt", "w", encoding="utf-8") as f:
         json.dump(best_weights, f, indent=4, ensure_ascii=False)
     print("\n最良重みを best_weights.txt に保存しました。")
-
-    # 全世代通じた最強重みを保存
-    best_ever = max(history, key=lambda x: x["best_fitness"])
-    with open("best_ever_weights.txt", "w", encoding="utf-8") as f:
-        json.dump(best_ever["weights"], f, indent=4, ensure_ascii=False)
-    print(f"全世代最強（第{best_ever['gen']}世代: {best_ever['best_fitness']:.2f}%）を best_ever_weights.txt に保存しました。")
 
     save_fitness_graph(history)
     print("\nプログラム完了。")

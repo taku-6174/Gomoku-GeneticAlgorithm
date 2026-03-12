@@ -366,19 +366,28 @@ class GomokuAnalyzer:
                 return (r, c)
             self.board[r][c] = 0
 
-        # 【追加】相手の活三・活四などの緊急脅威を検出してブロック
+        # 【活四は重み関係なく必ずブロック・攻める】
         urgent = self.detect_urgent_threats(opponent)
         if urgent:
-            ur = urgent[0]
-            #print(f"  → 防御急所(urgent)！({ur[0]}, {ur[1]}) に着手して阻止 (score={ur[2]})")
-            return (ur[0], ur[1])
-        
-         # 【追加】自分の活三・活四を優先して攻める
+            # 活四(open_four)以上は必ずブロック
+            if urgent[0][2] >= self.weights['open_four']:
+                return (urgent[0][0], urgent[0][1])
+            # 活三は defense_weight が高い個体だけブロック
+            # → 守備型個体(defense_weight高い)はブロック、攻撃型(低い)はスルーしてミニマックスに任せる
+            elif urgent[0][2] >= self.weights['open_three']:
+                if self.weights['defense_weight'] >= 1.3:
+                    return (urgent[0][0], urgent[0][1])
+
+        # 【自分の攻撃チャンス: 活四以上は必ず攻める、活三は open_three の重みで判断】
         my_urgent = self.detect_urgent_threats(player)
         if my_urgent:
-            ur = my_urgent[0]
-            #print(f"  → 攻撃急所！({ur[0]}, {ur[1]}) に着手 (score={ur[2]})")
-            return (ur[0], ur[1])
+            # 活四以上は必ず攻める
+            if my_urgent[0][2] >= self.weights['open_four']:
+                return (my_urgent[0][0], my_urgent[0][1])
+            # 活三は open_three が高い個体だけ積極的に攻める
+            elif my_urgent[0][2] >= self.weights['open_three']:
+                if self.weights['open_three'] >= 1400:
+                    return (my_urgent[0][0], my_urgent[0][1])
 
         # 最初の数手は静的評価
         if len(self.move_history) < 3:
